@@ -2,11 +2,12 @@ import 'dotenv/config'
 import OpenAI from 'openai'
 import { Telegraf } from 'telegraf'
 import {
-  clearMessages,
-  getMessages,
+  createConversation,
+  getConversationMessages,
+  getLatestConversation,
+  getUserConversations,
   saveMessage,
 } from './database'
-
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
 
 const ai = new OpenAI({
@@ -14,24 +15,56 @@ const ai = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
 })
 
+function getOrCreateConversation(userId: number) {
+  const conversation = getLatestConversation(userId)
+
+  if (conversation) {
+    return conversation.id
+  }
+
+  return createConversation(userId)
+}
+
 bot.start((ctx) => {
-  clearMessages(ctx.from.id)
+  const userId = ctx.from.id
+
+  createConversation(userId)
 
   ctx.reply(
-    'سلام 👋 من دستیار هوش مصنوعی تو هستم.\n\nهر چیزی می‌خوای بپرس!'
+    'سلام 👋 من دستیار هوش مصنوعی تو هستم.\n\n' +
+      'یک گفت‌وگوی جدید برایت ساخته شد. هر چیزی می‌خوای بپرس!'
   )
 })
 
 bot.command('newchat', (ctx) => {
-  clearMessages(ctx.from.id)
+  const userId = ctx.from.id
 
-  ctx.reply('✅ گفت‌وگوی جدید شروع شد.')
+  const conversationId = createConversation(userId)
+
+  ctx.reply(
+    `✅ گفت‌وگوی جدید ساخته شد.\n\n` +
+      `Conversation ID: ${conversationId}`
+  )
 })
 
-bot.command('clear', (ctx) => {
-  clearMessages(ctx.from.id)
+bot.command('chats', (ctx) => {
+  const userId = ctx.from.id
 
-  ctx.reply('🗑️ تاریخچه گفت‌وگوی شما پاک شد.')
+  const conversations = getUserConversations(userId)
+
+  if (conversations.length === 0) {
+    ctx.reply('هنوز هیچ گفت‌وگویی نداری.')
+    return
+  }
+
+  const text = conversations
+    .map(
+      (conversation, index) =>
+        `${index + 1}. ${conversation.title} (ID: ${conversation.id})`
+    )
+    .join('\n')
+
+  ctx.reply(`💬 گفت‌وگوهای شما:\n\n${text}`)
 })
 
 bot.on('text', async (ctx) => {
@@ -39,9 +72,17 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id
     const userMessage = ctx.message.text
 
-    saveMessage(userId, 'user', userMessage)
+    const conversationId = getOrCreateConversation(userId)
 
-    const history = getMessages(userId)
+    saveMessage(
+      conversationId,
+      'user',
+      userMessage
+    )
+
+    const history = getConversationMessages(
+      conversationId
+    )
 
     await ctx.sendChatAction('typing')
 
@@ -50,14 +91,21 @@ bot.on('text', async (ctx) => {
       messages: history,
     })
 
-    const answer = response.choices[0]?.message?.content
+    const answer =
+      response.choices[0]?.message?.content
 
     if (!answer) {
-      await ctx.reply('متأسفانه جوابی دریافت نکردم 😕')
+      await ctx.reply(
+        'متأسفانه جوابی دریافت نکردم 😕'
+      )
       return
     }
 
-    saveMessage(userId, 'assistant', answer)
+    saveMessage(
+      conversationId,
+      'assistant',
+      answer
+    )
 
     await ctx.reply(answer)
   } catch (error) {
