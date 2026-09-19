@@ -1,6 +1,11 @@
 import 'dotenv/config'
 import OpenAI from 'openai'
 import { Telegraf } from 'telegraf'
+import {
+  clearMessages,
+  getMessages,
+  saveMessage,
+} from './database'
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
 
@@ -9,15 +14,8 @@ const ai = new OpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
 })
 
-type ChatMessage = {
-  role: 'user' | 'assistant'
-  content: string
-}
-
-const conversations = new Map<number, ChatMessage[]>()
-
 bot.start((ctx) => {
-  conversations.delete(ctx.from.id)
+  clearMessages(ctx.from.id)
 
   ctx.reply(
     'سلام 👋 من دستیار هوش مصنوعی تو هستم.\n\nهر چیزی می‌خوای بپرس!'
@@ -25,9 +23,15 @@ bot.start((ctx) => {
 })
 
 bot.command('newchat', (ctx) => {
-  conversations.delete(ctx.from.id)
+  clearMessages(ctx.from.id)
 
   ctx.reply('✅ گفت‌وگوی جدید شروع شد.')
+})
+
+bot.command('clear', (ctx) => {
+  clearMessages(ctx.from.id)
+
+  ctx.reply('🗑️ تاریخچه گفت‌وگوی شما پاک شد.')
 })
 
 bot.on('text', async (ctx) => {
@@ -35,14 +39,9 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id
     const userMessage = ctx.message.text
 
-    const history = conversations.get(userId) ?? []
+    saveMessage(userId, 'user', userMessage)
 
-    history.push({
-      role: 'user',
-      content: userMessage,
-    })
-
-    conversations.set(userId, history)
+    const history = getMessages(userId)
 
     await ctx.sendChatAction('typing')
 
@@ -58,10 +57,7 @@ bot.on('text', async (ctx) => {
       return
     }
 
-    history.push({
-      role: 'assistant',
-      content: answer,
-    })
+    saveMessage(userId, 'assistant', answer)
 
     await ctx.reply(answer)
   } catch (error) {
