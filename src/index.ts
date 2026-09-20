@@ -1,34 +1,36 @@
 import 'dotenv/config'
 import OpenAI from 'openai'
 import { Telegraf } from 'telegraf'
+
 import {
   createConversation,
+  getConversationByIdForUser,
   getConversationMessages,
-  getLatestConversation,
+  getOrCreateActiveConversation,
   getUserConversations,
   saveMessage,
+  setActiveConversation,
 } from './database'
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!)
+
+const bot = new Telegraf(
+  process.env.TELEGRAM_BOT_TOKEN!
+)
 
 const ai = new OpenAI({
   apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: 'https://openrouter.ai/api/v1',
 })
 
-function getOrCreateConversation(userId: number) {
-  const conversation = getLatestConversation(userId)
-
-  if (conversation) {
-    return conversation.id
-  }
-
-  return createConversation(userId)
-}
-
 bot.start((ctx) => {
   const userId = ctx.from.id
 
-  createConversation(userId)
+  const conversationId =
+    createConversation(userId)
+
+  setActiveConversation(
+    userId,
+    conversationId
+  )
 
   ctx.reply(
     'سلام 👋 من دستیار هوش مصنوعی تو هستم.\n\n' +
@@ -39,7 +41,13 @@ bot.start((ctx) => {
 bot.command('newchat', (ctx) => {
   const userId = ctx.from.id
 
-  const conversationId = createConversation(userId)
+  const conversationId =
+    createConversation(userId)
+
+  setActiveConversation(
+    userId,
+    conversationId
+  )
 
   ctx.reply(
     `✅ گفت‌وگوی جدید ساخته شد.\n\n` +
@@ -50,10 +58,14 @@ bot.command('newchat', (ctx) => {
 bot.command('chats', (ctx) => {
   const userId = ctx.from.id
 
-  const conversations = getUserConversations(userId)
+  const conversations =
+    getUserConversations(userId)
 
   if (conversations.length === 0) {
-    ctx.reply('هنوز هیچ گفت‌وگویی نداری.')
+    ctx.reply(
+      'هنوز هیچ گفت‌وگویی نداری.'
+    )
+
     return
   }
 
@@ -64,7 +76,55 @@ bot.command('chats', (ctx) => {
     )
     .join('\n')
 
-  ctx.reply(`💬 گفت‌وگوهای شما:\n\n${text}`)
+  ctx.reply(
+    `💬 گفت‌وگوهای شما:\n\n${text}\n\n` +
+      `برای ورود به یک گفت‌وگو:\n` +
+      `/switch ID`
+  )
+})
+
+bot.command('switch', (ctx) => {
+  const userId = ctx.from.id
+
+  const parts =
+    ctx.message.text.trim().split(/\s+/)
+
+  const conversationId =
+    Number(parts[1])
+
+  if (!conversationId) {
+    ctx.reply(
+      '❌ لطفاً ID گفت‌وگو را وارد کن.\n\n' +
+        'مثال:\n' +
+        '/switch 2'
+    )
+
+    return
+  }
+
+  const conversation =
+    getConversationByIdForUser(
+      userId,
+      conversationId
+    )
+
+  if (!conversation) {
+    ctx.reply(
+      '❌ این گفت‌وگو پیدا نشد.'
+    )
+
+    return
+  }
+
+  setActiveConversation(
+    userId,
+    conversation.id
+  )
+
+  ctx.reply(
+    `✅ وارد گفت‌وگوی "${conversation.title}" شدی.\n\n` +
+      `Conversation ID: ${conversation.id}`
+  )
 })
 
 bot.on('text', async (ctx) => {
@@ -72,7 +132,10 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id
     const userMessage = ctx.message.text
 
-    const conversationId = getOrCreateConversation(userId)
+    const conversationId =
+      getOrCreateActiveConversation(
+        userId
+      )
 
     saveMessage(
       conversationId,
@@ -80,16 +143,20 @@ bot.on('text', async (ctx) => {
       userMessage
     )
 
-    const history = getConversationMessages(
-      conversationId
+    const history =
+      getConversationMessages(
+        conversationId
+      )
+
+    await ctx.sendChatAction(
+      'typing'
     )
 
-    await ctx.sendChatAction('typing')
-
-    const response = await ai.chat.completions.create({
-      model: 'openrouter/free',
-      messages: history,
-    })
+    const response =
+      await ai.chat.completions.create({
+        model: 'openrouter/free',
+        messages: history,
+      })
 
     const answer =
       response.choices[0]?.message?.content
@@ -98,6 +165,7 @@ bot.on('text', async (ctx) => {
       await ctx.reply(
         'متأسفانه جوابی دریافت نکردم 😕'
       )
+
       return
     }
 
@@ -109,7 +177,10 @@ bot.on('text', async (ctx) => {
 
     await ctx.reply(answer)
   } catch (error) {
-    console.error('AI Error:', error)
+    console.error(
+      'AI Error:',
+      error
+    )
 
     await ctx.reply(
       'متأسفانه مشکلی در ارتباط با هوش مصنوعی پیش آمد 😕'
@@ -119,4 +190,6 @@ bot.on('text', async (ctx) => {
 
 bot.launch()
 
-console.log('🤖 Telegram bot is running...')
+console.log(
+  '🤖 Telegram bot is running...'
+)
